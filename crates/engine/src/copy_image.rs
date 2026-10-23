@@ -43,21 +43,7 @@ impl Document {
     /// RGBA pixels (width, height, pixels) for the clipboard. Soft masks become alpha.
     pub fn page_image_rgba(&self, page: usize, index: usize) -> Result<(u32, u32, Vec<u8>), String> {
         let (_, bytes) = self.page_image_copy_file(page, index)?;
-        let format = image::guess_format(&bytes).map_err(|e| e.to_string())?;
-        let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes.as_slice()), format);
-        let mut limits = image::Limits::default();
-        limits.max_alloc = Some(MAX_COPY_PIXELS * 4);
-        reader.limits(limits);
-        let decoder = reader.into_decoder().map_err(|e| e.to_string())?;
-        let (w, h) = image::ImageDecoder::dimensions(&decoder);
-        if w == 0 || h == 0 {
-            return Err("the image is empty".into());
-        }
-        if u64::from(w) * u64::from(h) > MAX_COPY_PIXELS {
-            return Err(format!("the image is too large to copy ({w} × {h} pixels); use Save Image As"));
-        }
-        let rgba = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?.into_rgba8();
-        Ok((rgba.width(), rgba.height(), rgba.into_raw()))
+        image_rgba(&bytes)
     }
 
     /// Edit ▸ Copy of an added image (`index` among `page`'s added items): its picture as a file
@@ -82,6 +68,26 @@ fn picture_file(cos: &Cos, image: ObjRef) -> Result<(&'static str, Vec<u8>), Str
         Object::Stream(s) if s.dict.name(b"Subtype") == Some(b"Image") && s.dict.name(b"Filter") == Some(b"JPXDecode") => Ok(("jp2", s.raw.to_vec())),
         _ => pdfcraft_create::image_file(cos, image),
     }
+}
+
+/// An image file's pixels at its own resolution, as straight (unpremultiplied) RGBA (width,
+/// height, pixels) for the clipboard. Larger pictures than a clipboard takes are refused.
+pub fn image_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let format = image::guess_format(bytes).map_err(|e| e.to_string())?;
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_COPY_PIXELS * 4);
+    reader.limits(limits);
+    let decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    let (w, h) = image::ImageDecoder::dimensions(&decoder);
+    if w == 0 || h == 0 {
+        return Err("the image is empty".into());
+    }
+    if u64::from(w) * u64::from(h) > MAX_COPY_PIXELS {
+        return Err(format!("the image is too large to copy ({w} × {h} pixels); use Save Image As"));
+    }
+    let rgba = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?.into_rgba8();
+    Ok((rgba.width(), rgba.height(), rgba.into_raw()))
 }
 
 /// Whether image object `image` in `cos` is the picture `file` (as [`picture_file`] writes it).
