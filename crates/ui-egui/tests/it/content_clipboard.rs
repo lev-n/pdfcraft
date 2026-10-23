@@ -1,5 +1,5 @@
 //! Edit ▸ Cut, Copy and Paste of added text boxes and images in the real shell (#2636): the
-//! keys and the Edit menu, in one document and between two.
+//! keys, the item's right-click menu and the Edit menu, in one document and between two.
 
 use egui::Pos2;
 use egui_kittest::Harness;
@@ -50,6 +50,15 @@ fn click(h: &mut Harness<'static, PdfCraftApp>, p: Pos2) {
     h.drag_at(p);
     h.run_steps(1);
     h.drop_at(p);
+    h.run_steps(3);
+}
+
+fn right_click(h: &mut Harness<'static, PdfCraftApp>, p: Pos2) {
+    h.hover_at(p);
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE });
+    }
     h.run_steps(3);
 }
 
@@ -465,4 +474,120 @@ fn a_paste_mid_drag_is_ignored() {
     let a = added(&h);
     assert_eq!(a.len(), 1, "nothing pasted mid-drag");
     assert!(a[0].content.rect()[3] < styled().rect[3] - 30.0, "the dragged box moved: {:?}", a[0].content.rect());
+}
+
+#[test]
+fn the_right_click_menu_cuts_copies_pastes_and_deletes_added_content() {
+    let shots = std::env::var("PDFCRAFT_SHOTS").ok();
+    let _gpu = shots.is_some().then(crate::gpu);
+    let mut h = harness();
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: styled() }));
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(3);
+    let original = added(&h)[0].content.clone();
+    let on_box = at(&h, 60.0, 198.0);
+    right_click(&mut h, on_box);
+    assert_eq!(h.state().views[0].content.selected, Some((0, 0)), "a right-click selects the box");
+    assert!(h.state().views[0].content.draft.is_none(), "without opening it for typing");
+    assert!(h.query_by_label("Comments panel").is_none(), "the box's menu, not the page's");
+    if let Some(dir) = &shots {
+        h.render().unwrap().save(format!("{dir}/added-text-menu.png")).unwrap();
+    }
+    item(&h, "Copy").click();
+    h.run_steps(3);
+    assert!(h.state().content_clipboard.is_some());
+    // Paste over empty page puts the box's top-left corner where the menu was opened.
+    let empty = at(&h, 100.0, 300.0);
+    right_click(&mut h, empty);
+    item(&h, "Paste").click();
+    h.run_steps(3);
+    let a = added(&h);
+    assert_eq!(a.len(), 2);
+    let r = a[1].content.rect();
+    assert!((r[0] - 100.0).abs() < 1.0 && (r[3] - 100.0).abs() < 1.0, "top-left at (100, 300) from the page's top-left: {r:?}");
+    assert_eq!(a[1].content, original.with_rect(r));
+    // Cut from the menu.
+    let on_copy = at(&h, 110.0, 303.0);
+    right_click(&mut h, on_copy);
+    assert_eq!(h.state().views[0].content.selected, Some((0, 1)));
+    item(&h, "Cut").click();
+    h.run_steps(3);
+    assert_eq!(added(&h).len(), 1);
+    // Delete from the menu.
+    right_click(&mut h, on_box);
+    h.get_by_label("Delete").click();
+    h.run_steps(3);
+    assert!(added(&h).is_empty());
+    // The page's own menu, over empty page, offers Paste with the cut box.
+    right_click(&mut h, empty);
+    item(&h, "Paste").click();
+    h.run_steps(3);
+    assert_eq!(added(&h).len(), 1);
+}
+
+/// With an item copied, the page menu's Paste of a picture copied since puts the picture where
+/// the menu was opened, on that page.
+#[test]
+fn menu_paste_of_a_newer_picture_lands_where_the_menu_was_opened() {
+    let mut h = harness();
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: styled() }));
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(3);
+    h.state_mut().views[0].content.selected = Some((0, 0));
+    key(&mut h, egui::Event::Copy);
+    h.state_mut().clipboard_override = Some(Clip::Image { width: 30, height: 20, rgba: [90u8, 90, 90, 255].repeat(30 * 20) });
+    let empty = at(&h, 100.0, 300.0);
+    right_click(&mut h, empty);
+    item(&h, "Paste").click();
+    h.run_steps(3);
+    let a = added(&h);
+    assert_eq!(a.len(), 2);
+    let AddedContent::Image(img) = &a[1].content else { panic!("the picture was pasted") };
+    let r = img.rect;
+    assert!((r[0] - 100.0).abs() < 1.0 && (r[3] - 100.0).abs() < 1.0 && (r[2] - r[0] - 30.0).abs() < 0.01, "at the point, a pixel a point: {r:?}");
+}
+
+/// With a text box open for typing, a right-click on another added item ends the typing and opens
+/// that item's menu, rather than reaching what lies under it.
+#[test]
+fn a_right_click_on_another_item_while_typing_opens_its_menu() {
+    let pdf = pdfcraft_engine::Session::new().create_from_images(&[("p.png".into(), png(300, 400, [10, 200, 30]))]).unwrap();
+    let mut h = harness_bytes(pdf.to_vec());
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: styled() }));
+    let add = Edit::AddImage {
+        page: 0,
+        rect: Some([40.0, 300.0, 120.0, 360.0]),
+        name: "logo.png".into(),
+        bytes: std::sync::Arc::new(png(40, 30, [200, 0, 0])),
+    };
+    assert!(h.state_mut().apply_edit(add));
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(3);
+    let on_box = at(&h, 60.0, 198.0);
+    click(&mut h, on_box);
+    assert!(h.state().views[0].content.draft.is_some(), "the box is open for typing");
+    let on_image = at(&h, 80.0, 70.0);
+    right_click(&mut h, on_image);
+    let v = &h.state().views[0];
+    assert!(v.content.draft.is_none(), "the typing ended");
+    assert_eq!(v.content.selected, Some((0, 1)), "the image");
+    assert!(v.image_selection.is_none(), "not the page's picture under it");
+    item(&h, "Cut");
+}
+
+/// The page menu in Add Text offers no Copy Image left over from a picture right-clicked earlier
+/// with the Select tool.
+#[test]
+fn the_page_menu_forgets_an_earlier_picture() {
+    let pdf = pdfcraft_engine::Session::new().create_from_images(&[("p.png".into(), png(300, 400, [10, 200, 30]))]).unwrap();
+    let mut h = harness_bytes(pdf.to_vec());
+    let on_picture = at(&h, 150.0, 200.0);
+    right_click(&mut h, on_picture);
+    assert!(h.query_by_label("Copy Image").is_some(), "the picture's own menu");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    h.state_mut().quick_tool = pdfcraft_ui_egui::QuickTool::AddText;
+    h.run_steps(2);
+    right_click(&mut h, on_picture);
+    assert!(h.query_by_label("Copy Image").is_none());
 }

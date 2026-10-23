@@ -84,6 +84,9 @@ pub struct ContentView {
     pub draft: Option<TextDraft>,
     /// Select the item an add creates (the page's item count before it).
     pub select_added: Option<(usize, usize)>,
+    /// The last right-click on a page: the page, the point (display space) and the item under it,
+    /// for the menu's Cut, Copy, Paste and Delete.
+    pub(crate) menu: Option<(usize, [f64; 2], Option<usize>)>,
     grab: Option<(usize, Grab, Pos2)>,
     undrawable: UndrawableMemo,
     layout: Option<(AddedText, f32, f64, [f64; 4])>,
@@ -376,6 +379,24 @@ pub(crate) fn page_input(
         .and_then(|(_, si)| items.iter().find(|(i, _)| *i == si))
         .map(|(_, a)| screen_rect(xf, info, page, a.content.rect()));
     let corner = selected_rect.and_then(|r| handles(r).into_iter().find(|(c, ..)| c.distance(p) <= 6.0));
+    // A right-click selects the item under it for its menu (Cut, Copy, Paste, Delete); elsewhere
+    // the page's menu pastes where it was opened. Text being typed keeps the menu its own, unless
+    // another item is right-clicked: that ends the typing, as a click on it does.
+    let item = hit.map(|(i, _)| i);
+    if resp.secondary_clicked()
+        && (cv.draft.is_none() || item.is_some_and(|i| cv.draft.as_ref().is_some_and(|d| d.page != page || d.index != Some(i))))
+    {
+        if let Some(edit) = cv.finish_draft(added) {
+            view.pending_edit = Some(edit);
+        }
+        cv.menu = Some((page, to_display(xf, info, page, p), item));
+        if let Some(i) = item {
+            cv.selected = Some((page, i));
+            // Its menu is the only one: a page picture selected earlier keeps no menu of its own.
+            only_selected_item(view);
+            return true;
+        }
+    }
     // Cursors only where the page shows: the mode bar and side panels over a page scrolled under
     // them keep their own (#2755).
     let shows = resp.contains_pointer();

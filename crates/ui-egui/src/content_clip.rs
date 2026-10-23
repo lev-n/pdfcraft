@@ -1,5 +1,5 @@
 //! Edit ▸ Cut, Copy and Paste of added content (Edit a PDF ▸ Add content: text boxes and
-//! images), from ⌘X / ⌘C / ⌘V and the Edit menu (#2636). A copy
+//! images), from ⌘X / ⌘C / ⌘V, the Edit menu and the item's right-click menu (#2636). A copy
 //! keeps everything the item is: a text box its text, font, size, colour, alignment and box; an
 //! image its picture, box, turns, flips and crop. It pastes into any open document. The copy also
 //! goes on the system clipboard (the text, or the pixels) for other apps, and something newer
@@ -110,6 +110,15 @@ fn same_samples(a: &[[u8; 4]], b: &[[u8; 4]]) -> bool {
     !a.is_empty()
         && a.len() == b.len()
         && a.iter().zip(b).all(|(p, q)| near(p[3], q[3]) && (p[3] < 250 || q[3] < 250 || (0..3).all(|c| near(p[c], q[c]))))
+}
+
+/// What an added item's right-click menu (or the page's, in Edit a PDF) asks for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum MenuAction {
+    Cut(usize, usize),
+    Copy(usize, usize),
+    /// Onto a page, at the point (display space) when the menu was opened over empty page.
+    Paste(usize, Option<[f64; 2]>),
 }
 
 /// What ⌘V or Paste takes from the clipboards.
@@ -251,8 +260,8 @@ impl PdfCraftApp {
         true
     }
 
-    /// Edit ▸ Paste onto `page` (at `at`, display space, when given): a picture copied since on
-    /// the system clipboard, else the copied item.
+    /// Edit ▸ Paste and the page menu's Paste, onto `page` (at `at`, display space, when the menu
+    /// was opened there): a picture copied since on the system clipboard, else the copied item.
     /// Unlike ⌘V, text copied since doesn't stop it: Paste is only offered with an item copied.
     pub(crate) fn paste_from_menu(&mut self, page: usize, at: Option<[f64; 2]>) -> bool {
         let system = self.system_clip();
