@@ -3484,7 +3484,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 }
                 view.content.selected = None;
             }
-            let on_content = !on_objects && editing_content && can_modify && {
+            // A document that doesn't allow changes still takes a right-click on an added item,
+            // for its menu's Copy.
+            let on_content = !on_objects && editing_content && (can_modify || resp.secondary_clicked()) && {
                 source_blocked
                     || crate::content_ui::page_input(
                         ui,

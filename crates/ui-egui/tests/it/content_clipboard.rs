@@ -3,7 +3,7 @@
 
 use egui::Pos2;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use pdfcraft_engine::{ADDED_PASTE_STEP, AddedContent, AddedImage, AddedText, Edit, FontFamily, TextAlign};
 use pdfcraft_ui_egui::{Clip, PdfCraftApp};
 
@@ -590,4 +590,37 @@ fn the_page_menu_forgets_an_earlier_picture() {
     h.run_steps(2);
     right_click(&mut h, on_picture);
     assert!(h.query_by_label("Copy Image").is_none());
+}
+
+/// A document that allows copying but not changes: a right-click on an added item still opens its
+/// menu, where Copy works and Cut, Paste and Delete are unavailable.
+#[test]
+fn the_menu_copies_where_only_copying_is_allowed() {
+    let mut s = pdfcraft_engine::Session::new();
+    let id = s.open("form.pdf", None, std::sync::Arc::new(FORM.to_vec()), None).unwrap();
+    s.apply(id, Edit::AddText { page: 0, text: styled() }).unwrap();
+    let mut doc = pdfcraft_cos::Document::open(s.save_bytes(id).unwrap()).unwrap();
+    doc.set_encryption(&pdfcraft_cos::NewEncryption {
+        algorithm: pdfcraft_cos::Algorithm::Aes256,
+        user_password: "",
+        owner_password: "owner",
+        permissions: -1 ^ 0b1000,
+        encrypt_metadata: true,
+        seed: [6; 32],
+    })
+    .unwrap();
+    let mut h = harness_bytes(pdfcraft_cos::write_full(&doc, &Default::default()).unwrap());
+    (h.state_mut().left, h.state_mut().left_open) = (pdfcraft_ui_egui::LeftPanel::Tool("edit"), true);
+    h.run_steps(3);
+    let on_box = at(&h, 60.0, 198.0);
+    right_click(&mut h, on_box);
+    assert_eq!(h.state().views[0].content.selected, Some((0, 0)), "the box's menu");
+    for name in ["Cut", "Paste"] {
+        assert!(item(&h, name).accesskit_node().is_disabled(), "{name}");
+    }
+    assert!(h.get_by_label("Delete").accesskit_node().is_disabled());
+    item(&h, "Copy").click();
+    h.run_steps(3);
+    assert!(h.state().content_clipboard.is_some(), "copied");
+    assert_eq!(added(&h).len(), 1);
 }
