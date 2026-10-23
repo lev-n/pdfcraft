@@ -739,6 +739,7 @@ pub struct PdfCraftApp {
     /// Pages copied or cut in Organize Pages, ready to paste (into any document).
     pub page_clipboard: Option<PageClip>,
     /// An added text box or image copied or cut in Edit a PDF, ready to paste (into any document).
+    /// Anything else copied in PdfCraft (page text, a page picture, a snapshot) replaces it.
     pub content_clipboard: Option<ContentClip>,
     /// Files dropped on the page grid, waiting for the pointer to say which gap they go to.
     grid_drop: Option<GridDrop>,
@@ -3092,6 +3093,7 @@ impl PdfCraftApp {
             return false;
         }
         ctx.copy_text(text);
+        self.content_clipboard = None;
         true
     }
 

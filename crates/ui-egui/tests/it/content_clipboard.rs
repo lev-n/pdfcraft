@@ -283,8 +283,8 @@ fn a_newer_system_clipboard_wins_over_the_copied_item() {
     assert_eq!(a.len(), 3);
     assert!(matches!(a[2].content, AddedContent::Image(_)));
     assert_eq!(undo_label(&h).as_deref(), Some("Add image"));
-    // A copied image wins while its pixels are still there.
-    h.state_mut().clipboard_override = None;
+    // A copied image wins while its pixels are still there (the clipboard held text before).
+    h.state_mut().clipboard_override = Some(Clip::Text("older".into()));
     h.run_steps(2);
     h.state_mut().views[0].content.selected = Some((0, 2));
     key(&mut h, egui::Event::Copy);
@@ -413,4 +413,56 @@ fn cut_honours_the_documents_change_permission() {
     assert_eq!(h.state().toast.as_ref().map(|t| t.0.as_str()), Some("The document's security settings don't allow this change"));
     key(&mut h, egui::Event::Copy);
     assert!(h.state().content_clipboard.is_some(), "copying is allowed");
+}
+
+/// Copying something else in PdfCraft (page text here) replaces the copied item, also where there
+/// is no system clipboard to tell (the web): ⌘V doesn't paste the older item.
+#[test]
+fn copying_page_text_replaces_the_copied_item() {
+    let mut h = harness();
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: styled() }));
+    (h.state_mut().left, h.state_mut().left_open) = (pdfcraft_ui_egui::LeftPanel::Tool("edit"), true);
+    h.run_steps(3);
+    h.state_mut().views[0].content.selected = Some((0, 0));
+    key(&mut h, egui::Event::Copy);
+    assert!(h.state().content_clipboard.is_some());
+    let mut selected = false;
+    for _ in 0..200 {
+        h.run_steps(2);
+        if h.state_mut().views[0].select_all() {
+            selected = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(selected, "the page has text to select");
+    key(&mut h, egui::Event::Copy);
+    assert!(h.state().content_clipboard.is_none(), "the page text is the newest copy");
+    paste(&mut h);
+    assert_eq!(added(&h).len(), 1);
+}
+
+/// ⌘V while an item is being dragged pastes nothing: the drag would otherwise end on the pasted
+/// copy, which a paste selects, and move it instead of the item dragged.
+#[test]
+fn a_paste_mid_drag_is_ignored() {
+    let mut h = harness();
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: styled() }));
+    (h.state_mut().left, h.state_mut().left_open) = (pdfcraft_ui_egui::LeftPanel::Tool("edit"), true);
+    h.run_steps(3);
+    h.state_mut().views[0].content.selected = Some((0, 0));
+    key(&mut h, egui::Event::Copy);
+    let (from, to) = (at(&h, 60.0, 198.0), at(&h, 60.0, 250.0));
+    h.hover_at(from);
+    h.run_steps(1);
+    h.drag_at(from);
+    h.run_steps(1);
+    h.hover_at(to);
+    h.run_steps(2);
+    paste(&mut h);
+    h.drop_at(to);
+    h.run_steps(3);
+    let a = added(&h);
+    assert_eq!(a.len(), 1, "nothing pasted mid-drag");
+    assert!(a[0].content.rect()[3] < styled().rect[3] - 30.0, "the dragged box moved: {:?}", a[0].content.rect());
 }

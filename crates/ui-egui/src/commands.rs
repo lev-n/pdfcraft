@@ -90,7 +90,10 @@ impl PdfCraftApp {
             && (spec.id != "edit.copy"
                 || self.selected_content().is_some()
                 || self.active.and_then(|i| self.views.get(i)).is_some_and(|v| !v.organize && v.selected_text().is_some_and(|t| !t.is_empty())))
-            && (spec.id != "edit.cut" || self.selected_content().is_some())
+            // Cut copies first, so it needs copying allowed as well as changes.
+            && (spec.id != "edit.cut"
+                || self.selected_content().is_some()
+                    && commands::command("edit.copy").is_some_and(|c| commands::is_enabled(c, &self.session, self.active_ids().map(|(_, id)| id))))
             && (spec.id != "edit.paste" || self.can_paste_content())
             && (spec.needs != commands::Needs::TwoPageView || self.active.and_then(|i| self.views.get(i)).is_some_and(crate::DocView::cover_applies))
             && match spec.id {
@@ -118,18 +121,19 @@ impl PdfCraftApp {
     fn execute_unguarded(&mut self, id: &str) -> bool {
         let Some(spec) = commands::command(id) else { return false };
         if !self.command_enabled(spec) {
+            let doc = self.active_ids().map(|(_, id)| id);
             let why = match spec.needs {
-                // The document allows it, and there is nothing to act on.
-                _ if matches!(spec.id, "edit.cut" | "edit.copy" | "edit.paste")
-                    && commands::is_enabled(spec, &self.session, self.active_ids().map(|(_, id)| id)) =>
-                {
-                    match spec.id {
-                        "edit.cut" => tl!("Select a text box or an image first"),
-                        "edit.copy" => tl!("Select text, a text box or an image first"),
-                        _ => tl!("Copy a text box or an image first"),
-                    }
-                    .to_string()
+                // Cut copies first.
+                _ if spec.id == "edit.cut" && commands::command("edit.copy").is_some_and(|c| !commands::is_enabled(c, &self.session, doc)) => {
+                    crate::copy_refused().to_string()
                 }
+                // The document allows it, and there is nothing to act on.
+                _ if matches!(spec.id, "edit.cut" | "edit.copy" | "edit.paste") && commands::is_enabled(spec, &self.session, doc) => match spec.id {
+                    "edit.cut" => tl!("Select a text box or an image first"),
+                    "edit.copy" => tl!("Select text, a text box or an image first"),
+                    _ => tl!("Copy a text box or an image first"),
+                }
+                .to_string(),
                 commands::Needs::Undo => tl!("Nothing to undo").to_string(),
                 commands::Needs::Redo => tl!("Nothing to redo").to_string(),
                 commands::Needs::FillForms if self.active.is_some() => tl!("This document has no form fields you can fill in").to_string(),

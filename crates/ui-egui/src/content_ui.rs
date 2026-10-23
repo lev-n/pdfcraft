@@ -90,6 +90,11 @@ pub struct ContentView {
 }
 
 impl ContentView {
+    /// An item is being moved or resized.
+    pub(crate) fn dragging(&self) -> bool {
+        self.grab.is_some()
+    }
+
     pub(crate) fn finish_draft(&mut self, added: &[Added]) -> Option<Edit> {
         self.draft.take().and_then(|d| finish(self, d, added))
     }
@@ -743,6 +748,7 @@ impl crate::PdfCraftApp {
                 return Err("the web version can't put images on the clipboard yet; use Save Image As".to_string());
             }
             self.last_copied_image = Some((w, h, rgba));
+            self.content_clipboard = None;
             Ok((w, h))
         });
         match copied {
@@ -869,7 +875,8 @@ impl crate::PdfCraftApp {
     pub(crate) fn paste_image_key(&mut self, i: usize, ctx: &egui::Context, pasted: bool) {
         let free = self.dialog.is_none() && !self.palette_open && !ctx.egui_wants_keyboard_input();
         let Some(view) = self.views.get(i) else { return };
-        if !pasted || !free || view.organize || view.forms.focus.is_some() || self.is_preparing() {
+        // Not mid-drag: the drag would end on the pasted copy, which a paste selects.
+        if !pasted || !free || view.organize || view.forms.focus.is_some() || self.is_preparing() || view.content.dragging() {
             return;
         }
         let clip = self.system_clip();

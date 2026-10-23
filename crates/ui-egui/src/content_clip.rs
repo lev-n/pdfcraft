@@ -192,6 +192,10 @@ impl PdfCraftApp {
     /// A copied picture's pixels on the system clipboard, for other apps. A picture too large for
     /// it is kept for pasting in PdfCraft only.
     fn put_picture(&mut self, bytes: &[u8]) -> Mark {
+        // No system clipboard to write or read back (the web, tests): the pixels aren't needed.
+        if !self.asks_system_clipboard() {
+            return Mark::Unwritten(None);
+        }
         let Ok((w, h, rgba)) = pdfcraft_engine::image_rgba(bytes) else { return self.unwritten() };
         let (w, h) = (w as usize, h as usize);
         #[cfg(not(target_arch = "wasm32"))]
